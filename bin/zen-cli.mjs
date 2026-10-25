@@ -378,10 +378,11 @@ function chromeSelect(key) {
   const done = new Promise(res => {
     const finish = () => {
       const { NavigableManager } = ChromeUtils.importESModule("chrome://remote/content/shared/NavigableManager.sys.mjs");
-      res(JSON.stringify({ ctx: tab.linkedPanel ? NavigableManager.getIdForBrowser(tab.linkedBrowser) : null, pending: tab.hasAttribute("pending") }));
+      res(JSON.stringify({ ctx: tab.linkedPanel ? NavigableManager.getIdForBrowser(tab.linkedBrowser) : null, loading: tab.hasAttribute("pending") || tab.hasAttribute("busy") }));
     };
     const start = Date.now();
-    const check = () => (!tab.hasAttribute("pending") && tab.linkedPanel) || Date.now() - start > 8000 ? finish() : w.setTimeout(check, 50);
+    // An unloaded tab is "pending" until selected, then "busy" until its page loads.
+    const check = () => (!tab.hasAttribute("pending") && !tab.hasAttribute("busy") && tab.linkedPanel) || Date.now() - start > 15_000 ? finish() : w.setTimeout(check, 50);
     if (space && !tab.hasAttribute("zen-essential") && space !== gZenWorkspaces.activeWorkspace) {
       gZenWorkspaces.changeWorkspaceWithID(space).then(() => { select(); check(); }, () => { select(); check(); });
     } else { select(); check(); }
@@ -924,11 +925,11 @@ class Browser {
       const r = await this.chromeCall(chromeSelect, t.key);
       if (r.error) throw new ZenError(`${t.id} is gone. Run zen-cli tabs.`);
       if (r.ctx) { this.ctxOf.set(t.key, r.ctx); this.lastCtx = r.ctx; }
-      return r.ctx;
+      return { ctx: r.ctx, loading: r.loading || !r.ctx };
     }
     this.lastCtx = t.ctx;
     try { await this.call("browsingContext.activate", { context: t.ctx }, 1000); } catch (e) { if (!e.timeout) throw e; }
-    return t.ctx;
+    return { ctx: t.ctx, loading: false };
   }
 
   // With a Space, returns { key } of a tab loading there in the background; otherwise { ctx }.
@@ -954,7 +955,7 @@ class Browser {
     try { await this.call("browsingContext.navigate", { context: ctx, url, wait: "complete" }, 30_000); }
     catch (e) {
       if (e.timeout) loading = true;
-      else if (e instanceof BiDiError) throw new ZenError(`Navigation to ${url} failed: ${e.detail || e.error}`);
+      else if (e instanceof BiDiError) throw new ZenError(`Navigation to ${clipText(url, 100)} failed: ${e.detail || e.error}`);
       else throw e;
     }
     return { url: await this.urlOf(ctx), loading };
@@ -1084,7 +1085,7 @@ class Browser {
       if (started.done) {
         this.dropRefs(top);
         const ok = await Promise.race([loaded.promise.then(() => true), prompt.promise.then(() => false), sleep(15_000).then(() => null)]);
-        notes.push(ok === true ? `Page navigated to ${await this.urlOf(top)}` : ok === null ? "A navigation started and is still loading" : "Navigation paused");
+        notes.push(ok === true ? `Page navigated to ${clipText(await this.urlOf(top), 100)}` : ok === null ? "A navigation started and is still loading" : "Navigation paused");
       }
       if (created.done) {
         const p = await created.promise;
@@ -1243,10 +1244,10 @@ async function cmdOpen(b, a) {
 
 async function cmdGo(b, a) {
   const t = await b.tab(a.pos[0] || "");
-  const ctx = await b.activate(t);
+  const { loading } = await b.activate(t);
   const s = await b.state();
   const now = s.tabs.find(x => x.key === t.key) || t;
-  return `Switched to ${now.id} ${clipText(now.title || "(untitled)", 60)} | ${clipText(now.url, 90)}${where(now) ? " | " + where(now) : ""}${!ctx ? " (still loading)" : ""}`;
+  return `Switched to ${now.id} ${clipText(now.title || "(untitled)", 60)} | ${clipText(now.url, 90)}${where(now) ? " | " + where(now) : ""}${loading ? " (still loading)" : ""}`;
 }
 
 async function cmdClose(b, a) {
