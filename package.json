@@ -1,0 +1,29 @@
+{
+  "name": "zen-cli",
+  "version": "0.1.0",
+  "description": "Command-line tool that lets Claude Code read and drive the Zen browser over WebDriver BiDi",
+  "license": "MIT",
+  "author": "r1ckrck",
+  "type": "module",
+  "bin": {
+    "zen-cli": "bin/zen-cli.mjs"
+  },
+  "files": [
+    "bin/",
+    "skills/"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "os": [
+    "darwin",
+    "win32"
+  ],
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/r1ckrck/zen-cli.git"
+  }
+}

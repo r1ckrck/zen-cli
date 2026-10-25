@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>zen-cli test page</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 24px; }
+  .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .switch .knob { display: inline-block; width: 36px; height: 20px; background: #ccc; border-radius: 10px; cursor: pointer; }
+  .switch input:checked + .knob { background: #4a4; }
+  .fake { display: inline-block; padding: 6px 10px; background: #eef; cursor: pointer; }
+  #tall { height: 3000px; background: linear-gradient(#fff, #ddd); }
+  #panel { height: 120px; overflow: auto; border: 1px solid #ccc; }
+  #panel div { height: 600px; }
+</style>
+</head>
+<body>
+<header>
+  <nav aria-label="Main">
+    <a href="page2.html">Second page</a>
+    <a href="https://example.com/">External</a>
+  </nav>
+</header>
+<main>
+  <h1>Fixture</h1>
+  <p>This paragraph is plain text that compact reads should leave out.</p>
+
+  <form id="f" onsubmit="event.preventDefault(); log('submitted:' + new FormData(this).get('name'))">
+    <fieldset>
+      <legend>Profile</legend>
+      <label>Name <input name="name" id="name"></label>
+      <label>Password <input type="password" name="pw" value="secret"></label>
+      <label>Birthday <input type="date" name="bday"></label>
+      <label>Color <input type="color" name="color"></label>
+      <label>Volume <input type="range" name="vol" min="0" max="10"></label>
+      <label class="switch">Notifications <input type="checkbox" name="notify" id="notify"><span class="knob"></span></label>
+      <label><input type="radio" name="plan" value="free"> Free</label>
+      <label><input type="radio" name="plan" value="pro"> Pro</label>
+      <label>Country
+        <select name="country"><option value="">Pick one</option><option value="in">India</option><option value="nl">Netherlands</option></select>
+      </label>
+      <label>Bio <textarea name="bio"></textarea></label>
+      <label>Avatar <input type="file" name="avatar" id="avatar"></label>
+      <button type="submit">Save</button>
+    </fieldset>
+  </form>
+
+  <p>Echo: <span id="echo"></span></p>
+  <div class="fake" id="fake">Fake button</div>
+  <div contenteditable="true" id="editor" aria-label="Notes">Start</div>
+
+  <section aria-label="Dialogs">
+    <button onclick="log('alert:' + alert('Hello there'))">Alert</button>
+    <button onclick="log('confirm:' + confirm('Are you sure?'))">Confirm</button>
+    <button onclick="log('prompt:' + prompt('Your name?', 'anon'))">Prompt</button>
+    <button onclick="window.open('page2.html', '_blank')">Open tab</button>
+    <a href="page2.html" id="nav">Go to page two</a>
+  </section>
+
+  <shadow-card></shadow-card>
+
+  <iframe title="Same origin" srcdoc="<button onclick=&quot;parent.log('frame-click')&quot;>Frame button</button>"></iframe>
+  <iframe title="Cross origin" id="xo" width="300" height="80"></iframe>
+
+  <div id="panel" aria-label="Scroll panel"><div>Panel content</div></div>
+  <p id="out" aria-live="polite"></p>
+  <div id="tall"></div>
+  <h2>Bottom</h2>
+</main>
+<script>
+  const logs = [];
+  function log(m) { logs.push(m); document.getElementById('out').textContent = logs.join(' | '); }
+  document.getElementById('name').addEventListener('input', e => { document.getElementById('echo').textContent = e.target.value; });
+  document.getElementById('fake').addEventListener('click', () => log('fake-click'));
+  document.getElementById('notify').addEventListener('change', e => log('notify:' + e.target.checked));
+  customElements.define('shadow-card', class extends HTMLElement {
+    connectedCallback() {
+      const root = this.attachShadow({ mode: 'open' });
+      root.innerHTML = '<h3>Shadow card</h3><button>Shadow button</button>';
+      root.querySelector('button').addEventListener('click', () => log('shadow-click'));
+    }
+  });
+  const xo = new URLSearchParams(location.search).get('xo');
+  if (xo) document.getElementById('xo').src = xo;
+</script>
+</body>
+</html>
