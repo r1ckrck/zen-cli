@@ -7,7 +7,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   platformPaths, parseIni, listProfiles, resolveProfile, hasSafetyPref, mozlz4Decode, layoutFromSession,
-  renderOutline, renderLayout, parseChord, parseArgs, normalizeUrl, sameUrl, launchArgs, unwrap,
+  renderOutline, renderLayout, parseChord, parseArgs, normalizeUrl, sameUrl, launchArgs, unwrap, TabIds,
 } from "../bin/zen-cli.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -29,6 +29,7 @@ test("platform paths: macOS", () => {
   assert.equal(p.zenRoot, "/Users/u/Library/Application Support/zen");
   assert.deepEqual(p.appCandidates, ["/Applications/Zen.app", "/Users/u/Applications/Zen.app"]);
   assert.equal(p.socket(9333), "/tmp/zen-cli-9333.sock");
+  assert.equal(p.tabsFile(9333), "/tmp/zen-cli-9333-tabs.json");
 });
 
 test("platform paths: Windows", () => {
@@ -150,6 +151,21 @@ test("launch args and BiDi value unwrapping", () => {
   assert.deepEqual(unwrap({ type: "array", value: [{ type: "string", value: "a" }, { type: "number", value: 2 }, { type: "null" }] }), ["a", 2, null]);
   assert.deepEqual(unwrap({ type: "object", value: [["k", { type: "boolean", value: true }]] }), { k: true });
   assert.deepEqual(unwrap({ type: "node", sharedId: "x" }), { sharedId: "x" });
+});
+
+test("tab ids survive a helper restart and are never reused", () => {
+  const file = join(mkdtempSync(join(tmpdir(), "zen-cli-test-")), "tabs.json");
+  const a = new TabIds(file);
+  assert.equal(a.idFor("tab-a"), "t1");
+  assert.equal(a.idFor("tab-b"), "t2");
+  a.keep(new Set(["tab-b"]));
+  a.save();
+  const b = new TabIds(file);
+  assert.equal(b.idFor("tab-b"), "t2");
+  assert.equal(b.keyOf("t1"), undefined);
+  assert.equal(b.idFor("tab-c"), "t3");
+  writeFileSync(file, "not json");
+  assert.equal(new TabIds(file).idFor("tab-x"), "t1");
 });
 
 test("no personal paths or user names in shipped files", () => {

@@ -3,12 +3,12 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtempSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, existsSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { serve } from "./serve.mjs";
-import { zenHolder, quitZen } from "../bin/zen-cli.mjs";
+import { zenHolder, quitZen, platformPaths } from "../bin/zen-cli.mjs";
 
 const RUN = process.env.ZEN_CLI_E2E === "1";
 const CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "bin", "zen-cli.mjs");
@@ -46,6 +46,7 @@ after(async () => {
   if (pid) await quitZen(pid, profile);
   for (const s of servers) s.close();
   rmSync(dir, { recursive: true, force: true });
+  rmSync(platformPaths().tabsFile(PORT), { force: true });
 });
 
 test("full flow", { skip: !RUN && "set ZEN_CLI_E2E=1 to run against a real Zen", timeout: 300_000 }, async () => {
@@ -84,6 +85,11 @@ test("full flow", { skip: !RUN && "set ZEN_CLI_E2E=1 to run against a real Zen",
   assert.match(await ok("back"), /Went back/);
   assert.match(await ok("scroll", "down", "1000"), /Scrolled down\. Viewport at y=1000/);
   assert.match(await ok("shot"), /Saved .*\.jpg/);
-  assert.match(await ok("tabs"), /\* zen-cli test page/);
+  const before = (await ok("tabs")).split("\n").find(l => /\* zen-cli test page/.test(l));
+  assert.ok(before, "selected test tab not listed");
+  // A newer build restarts the helper; tab ids must stay the same.
+  const now = new Date();
+  utimesSync(CLI, now, now);
+  assert.ok((await ok("tabs")).split("\n").includes(before), "tab id changed after a helper restart");
   assert.match(await ok("layout"), /\(active\)/);
 });

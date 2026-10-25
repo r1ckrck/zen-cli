@@ -41,6 +41,7 @@ export function platformPaths(platform = process.platform, env = process.env, ho
       socket: port => `\\\\.\\pipe\\zen-cli-${user}-${port}`,
       shotsDir: join(tmp, "zen-cli"),
       logFile: port => join(tmp, `zen-cli-${port}.log`),
+    tabsFile: port => join(tmp, `zen-cli-${port}-tabs.json`),
     };
   }
   return {
@@ -49,6 +50,7 @@ export function platformPaths(platform = process.platform, env = process.env, ho
     socket: port => join(tmp, `zen-cli-${port}.sock`),
     shotsDir: join(tmp, "zen-cli"),
     logFile: port => join(tmp, `zen-cli-${port}.log`),
+    tabsFile: port => join(tmp, `zen-cli-${port}-tabs.json`),
   };
 }
 
@@ -798,17 +800,49 @@ export function parseChord(spec) {
 // Browser state, held by the helper
 // ---------------------------------------------------------------------------
 
+// Tab ids survive helper restarts and are never reused, so an old id can't point at a different tab.
+export class TabIds {
+  byKey = new Map(); byId = new Map(); next = 1; dirty = false;
+
+  constructor(file) {
+    this.file = file;
+    try {
+      const d = JSON.parse(readFileSync(file, "utf8"));
+      if (Number.isInteger(d.next)) { this.next = d.next; for (const [k, id] of Object.entries(d.ids)) this.#add(k, id); }
+    } catch {}
+  }
+
+  #add(key, id) { this.byKey.set(key, id); this.byId.set(id, key); }
+
+  idFor(key) {
+    if (!this.byKey.has(key)) { this.#add(key, `t${this.next++}`); this.dirty = true; }
+    return this.byKey.get(key);
+  }
+
+  keyOf(id) { return this.byId.get(id); }
+
+  // Forgets tabs that are gone; their ids stay retired.
+  keep(keys) {
+    for (const [k, id] of this.byKey) if (!keys.has(k)) { this.byKey.delete(k); this.byId.delete(id); this.dirty = true; }
+  }
+
+  save() {
+    if (!this.dirty) return;
+    this.dirty = false;
+    try { writeFileSync(this.file, JSON.stringify({ next: this.next, ids: Object.fromEntries(this.byKey) })); } catch {}
+  }
+}
+
 const STALE = new Set(["no such node", "no such element", "stale element reference", "detached shadow root", "no such frame"]);
 
 class Browser {
   bidi = null; sys = false; chrome = null; port;
-  tabIds = new Map(); tabKeys = new Map(); nextTab = 1;
   refs = new Map(); nextRef = 1;
   prompts = new Map();
   lastCtx = null;
   own = new Set(); // contexts of tabs zen-cli opened; open only navigates these in place
 
-  constructor(port) { this.port = port; }
+  constructor(port) { this.port = port; this.tabIds = new TabIds(PATHS.tabsFile(port)); }
 
   async ensure() {
     if (this.bidi?.open) return;
@@ -874,13 +908,8 @@ class Browser {
 
   // -- tabs -------------------------------------------------------------------
 
-  idFor(key) {
-    if (!this.tabIds.has(key)) { const id = `t${this.nextTab++}`; this.tabIds.set(key, id); this.tabKeys.set(id, key); }
-    return this.tabIds.get(key);
-  }
-
   tabIdForCtx(ctx) {
-    for (const [key, id] of this.tabIds) if (key === ctx || this.ctxOf.get(key) === ctx) return id;
+    for (const [key, id] of this.tabIds.byKey) if (key === ctx || this.ctxOf.get(key) === ctx) return id;
     return null;
   }
 
@@ -889,14 +918,18 @@ class Browser {
   async state() {
     if (this.sys) {
       const s = await this.chromeCall(chromeState);
-      for (const t of s.tabs) { t.id = this.idFor(t.key); if (t.ctx) this.ctxOf.set(t.key, t.ctx); }
+      for (const t of s.tabs) { t.id = this.tabIds.idFor(t.key); if (t.ctx) this.ctxOf.set(t.key, t.ctx); }
+      this.tabIds.keep(new Set(s.tabs.map(t => t.key)));
+      this.tabIds.save();
       return s;
     }
     const contexts = (await this.call("browsingContext.getTree", { maxDepth: 0 })).contexts;
     const states = await Promise.all(contexts.map(c => this.page(c.context, pageTabState, [], 3000).catch(() => ["", "hidden", false])));
     const tabs = contexts.map((c, i) => ({ key: c.context, ctx: c.context, url: c.url, title: states[i][0] || "", pinned: false, essential: false, space: null, folder: [], pending: false, selected: false, rank: 4 * states[i][2] + 2 * (states[i][1] === "visible") + 2.5 * (c.context === this.lastCtx) }));
     if (tabs.length) tabs.reduce((a, b) => (b.rank > a.rank ? b : a)).selected = true;
-    for (const t of tabs) t.id = this.idFor(t.key);
+    for (const t of tabs) t.id = this.tabIds.idFor(t.key);
+    this.tabIds.keep(new Set(tabs.map(t => t.key)));
+    this.tabIds.save();
     return { spaces: [], activeSpace: null, tabs };
   }
 
@@ -907,9 +940,9 @@ class Browser {
       if (!t) throw new ZenError("No selected tab. Run zen-cli tabs, then pass a tab id.");
       return t;
     }
-    const key = this.tabKeys.get(id.toLowerCase());
+    const key = this.tabIds.keyOf(id.toLowerCase());
     const t = key && s.tabs.find(t => t.key === key);
-    if (!t) throw new ZenError(`Unknown tab ${id}. Run zen-cli tabs for current ids.`);
+    if (!t) throw new ZenError(`Unknown tab ${id}: it was closed, or Zen restarted since. Run zen-cli tabs for current ids.`);
     return t;
   }
 
@@ -1667,6 +1700,7 @@ Act
 - Every action prints its outcome: navigation, new tab, covered element, or dialog. Add --read to get the new outline in the same call; after a submit, check the status line or use text.
 - open <url>: switches to a matching pinned tab. Otherwise it reuses the current tab only if zen-cli opened it, else opens and selects a new tab. --new forces a new tab; --space Work adds one there without moving the user's view (go to it before acting).
 - go tN switches (and loads) a tab. back, forward, reload.
+- A tab keeps its id until it closes; ids are never reused.
 
 Refs
 - Refs come from the latest read of a tab and stay valid until that tab is read again or navigates. Numbers keep counting up. A stale ref means the page changed: read again.
